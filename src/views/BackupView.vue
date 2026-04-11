@@ -11,7 +11,7 @@
         </label>
         <button class="btn-secondary" type="button" @click="clearAll">Cancella dati locali</button>
       </div>
-      <p class="helper-text" v-if="message">{{ message }}</p>
+      <p v-if="message" class="helper-text">{{ message }}</p>
     </div>
   </section>
 </template>

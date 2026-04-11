@@ -1,5 +1,18 @@
 <template>
   <section>
+    <div class="dashboard-header">
+      <div>
+        <p class="eyebrow">Selettore temporale</p>
+        <h2>Panoramica del patrimonio</h2>
+      </div>
+      <label class="time-selector">
+        <span>Periodo</span>
+        <select v-model="selectedYear">
+          <option v-for="year in yearOptions" :key="year" :value="year">{{ year }}</option>
+        </select>
+      </label>
+    </div>
+
     <div class="summary-grid">
       <div class="card">
         <h3>Patrimonio netto</h3>
@@ -68,16 +81,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
+const currentYear = new Date().getFullYear()
+const selectedYear = ref('YTD')
+const yearOptions = computed(() => {
+  const years = new Set<string>(store.entries.map((entry) => new Date(entry.date).getFullYear().toString()))
+  years.add(currentYear.toString())
+  return ['YTD', ...Array.from(years).sort((a, b) => Number(b) - Number(a))]
+})
+
 const netWorth = computed(() => store.netWorth)
 const accountCount = computed(() => store.accountCount)
 const entryCount = computed(() => store.entryCount)
 const investmentCount = computed(() => store.investmentCount)
 const recentAccounts = computed(() => store.recentAccounts)
-const recentEntries = computed(() => store.recentEntries)
+const recentEntries = computed(() => {
+  const year = selectedYear.value
+  const entries = store.entries.filter((entry) => {
+    const entryYear = new Date(entry.date).getFullYear().toString()
+    return year === 'YTD' ? entryYear === currentYear.toString() : entryYear === year
+  })
+  return [...entries].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 5)
+})
 const baseCurrency = computed(() => store.baseCurrency)
 
 const formatBalance = (value: number, currency: string) => {

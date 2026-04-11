@@ -4,6 +4,7 @@
   "description": "Personal Finance Manager",
   "main": "index.js",
   "scripts": {
+    "start": "npm run dev",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

@@ -1,13 +1,18 @@
-import type { Account, Entry, Investment, ThemeSettings } from '@/stores/app'
+import type { Account, Entry, Investment, InvestmentLot, ThemeSettings } from '@/stores/app'
 
 const STORAGE_KEY = 'pocketbloom-data'
 
 export interface PocketBloomData {
   baseCurrency: string
   theme: ThemeSettings
+  cloudProvider: string
+  autoBackup: boolean
+  supportedCurrencies: string[]
+  investmentCategories: string[]
   accounts: Account[]
   entries: Entry[]
   investments: Investment[]
+  investmentLots: InvestmentLot[]
   lastSync?: string
 }
 

@@ -4,6 +4,7 @@ import AccountsView from '@/views/AccountsView.vue'
 import EntriesView from '@/views/EntriesView.vue'
 import InvestmentsView from '@/views/InvestmentsView.vue'
 import BackupView from '@/views/BackupView.vue'
+import SettingsView from '@/views/SettingsView.vue'
 
 const routes = [
   { path: '/', name: 'Dashboard', component: DashboardView },
@@ -11,6 +12,7 @@ const routes = [
   { path: '/entrate', name: 'Entrate', component: EntriesView },
   { path: '/investimenti', name: 'Investimenti', component: InvestmentsView },
   { path: '/backup', name: 'Backup', component: BackupView },
+  { path: '/impostazioni', name: 'Impostazioni', component: SettingsView },
 ]
 
 const router = createRouter({

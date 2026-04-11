@@ -2,19 +2,19 @@
   <header class="topbar">
     <div>
       <p class="eyebrow">Benvenuto in PocketBloom</p>
-      <h2>Panoramica del patrimonio</h2>
+      <h2>{{ pageTitle }}</h2>
     </div>
-    <button type="button" class="btn-secondary" @click="toggleTheme">Toggle tema</button>
   </header>
 </template>
 
 <script setup lang="ts">
-import { useAppStore } from '@/stores/app'
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 
-const appStore = useAppStore()
-const toggleTheme = () => {
-  appStore.toggleTheme()
-}
+const route = useRoute()
+const pageTitle = computed(() =>
+  route.name === 'Dashboard' ? 'Panoramica del patrimonio' : route.name || ''
+)
 </script>
 
 <style scoped>

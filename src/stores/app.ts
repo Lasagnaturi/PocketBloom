@@ -27,6 +27,7 @@ export interface Entry {
 export interface Investment {
   id: string
   ticker: string
+  isin?: string
   category: string
   currency: string
   note?: string

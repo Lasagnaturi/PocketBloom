@@ -1,13 +1,16 @@
 <template>
   <aside
     class="sidebar"
-    :class="{ collapsed: collapsed && !hovered }"
+    :class="{ collapsed: collapsed && !hovered, 'mobile-open': mobileOpen }"
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
     <div class="sidebar-brand">
       <span class="brand-icon">🌸</span>
       <h1 v-if="!collapsed || hovered">PocketBloom</h1>
+      <button class="mobile-menu-toggle" type="button" @click="toggleMobileMenu" aria-label="Apri menu">
+        ☰
+      </button>
     </div>
 
     <nav>
@@ -67,6 +70,7 @@ import { useAppStore } from '@/stores/app'
 const appStore = useAppStore()
 const collapsed = ref(true)
 const hovered = ref(false)
+const mobileOpen = ref(false)
 
 const themeIcon = computed(() => (appStore.theme.mode === 'dark' ? '☀️' : '🌙'))
 const themeTooltip = computed(() =>
@@ -75,5 +79,9 @@ const themeTooltip = computed(() =>
 
 const toggleTheme = () => {
   appStore.toggleTheme()
+}
+
+const toggleMobileMenu = () => {
+  mobileOpen.value = !mobileOpen.value
 }
 </script>

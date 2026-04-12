@@ -1,5 +1,18 @@
 import { defineStore } from 'pinia'
 import { saveData, loadData, clearData } from '@/utils/persistence'
+import {
+  downloadDropboxBackup,
+  uploadDropboxBackup,
+  verifyDropboxToken,
+  downloadGoogleDriveBackup,
+  uploadGoogleDriveBackup,
+  verifyGoogleDriveToken,
+  downloadOneDriveBackup,
+  uploadOneDriveBackup,
+  verifyOneDriveToken,
+  getGoogleDriveAccessToken,
+  getOneDriveAccessToken,
+} from '@/services/cloud'
 import type { PocketBloomData } from '@/utils/persistence'
 
 export interface Account {
@@ -49,11 +62,25 @@ export interface ThemeSettings {
   mode: 'light' | 'dark'
 }
 
+export type CloudProvider = 'none' | 'google-drive' | 'dropbox' | 'one-drive'
+
+export interface CloudConfig {
+  token?: string
+  refreshToken?: string
+  clientId?: string
+  clientSecret?: string
+  path?: string
+}
+
+const isCloudProvider = (value: unknown): value is CloudProvider =>
+  value === 'none' || value === 'google-drive' || value === 'dropbox' || value === 'one-drive'
+
 export const useAppStore = defineStore('app', {
   state: () => ({
     theme: { mode: 'light' } as ThemeSettings,
     baseCurrency: 'EUR',
-    cloudProvider: 'none',
+    cloudProvider: 'none' as CloudProvider,
+    cloudConfig: {} as CloudConfig,
     autoBackup: false,
     supportedCurrencies: ['EUR', 'CHF'] as string[],
     investmentCategories: ['ETF', 'Crypto'] as string[],
@@ -73,12 +100,13 @@ export const useAppStore = defineStore('app', {
     netWorth: (state) => state.accounts.reduce((sum, account) => sum + account.balance, 0),
   },
   actions: {
-    init() {
+    async init() {
       const persisted = loadData()
       if (persisted) {
         this.baseCurrency = persisted.baseCurrency
         this.theme = persisted.theme
-        this.cloudProvider = persisted.cloudProvider ?? 'none'
+        this.cloudProvider = isCloudProvider(persisted.cloudProvider) ? persisted.cloudProvider : 'none'
+        this.cloudConfig = persisted.cloudConfig ?? {}
         this.autoBackup = persisted.autoBackup ?? false
         this.supportedCurrencies = persisted.supportedCurrencies ?? ['EUR', 'CHF']
         this.investmentCategories = persisted.investmentCategories ?? ['ETF', 'Crypto']
@@ -88,12 +116,146 @@ export const useAppStore = defineStore('app', {
         this.investmentLots = persisted.investmentLots ?? []
         this.lastSync = persisted.lastSync ?? ''
       }
+
+      await this.syncCloudOnStartup()
     },
-    save() {
+    getCloudPayload(): PocketBloomData {
+      return {
+        baseCurrency: this.baseCurrency,
+        theme: this.theme,
+        cloudProvider: this.cloudProvider,
+        cloudConfig: this.cloudConfig,
+        autoBackup: this.autoBackup,
+        supportedCurrencies: this.supportedCurrencies,
+        investmentCategories: this.investmentCategories,
+        accounts: this.accounts,
+        entries: this.entries,
+        investments: this.investments,
+        investmentLots: this.investmentLots,
+        lastSync: new Date().toISOString(),
+      }
+    },
+    async ensureCloudToken() {
+      if (this.cloudProvider === 'dropbox' || this.cloudProvider === 'none') {
+        return
+      }
+
+      const { token, refreshToken, clientId, clientSecret } = this.cloudConfig
+      if (!token && !refreshToken) {
+        return
+      }
+
+      if (this.cloudProvider === 'google-drive') {
+        const result = await getGoogleDriveAccessToken({ token, refreshToken, clientId, clientSecret })
+        if (result.token !== token || result.refreshToken !== refreshToken) {
+          this.cloudConfig.token = result.token
+          if (result.refreshToken) {
+            this.cloudConfig.refreshToken = result.refreshToken
+          }
+          saveData(this.getCloudPayload())
+        }
+      } else if (this.cloudProvider === 'one-drive') {
+        const result = await getOneDriveAccessToken({ token, refreshToken, clientId, clientSecret })
+        if (result.token !== token || result.refreshToken !== refreshToken) {
+          this.cloudConfig.token = result.token
+          if (result.refreshToken) {
+            this.cloudConfig.refreshToken = result.refreshToken
+          }
+          saveData(this.getCloudPayload())
+        }
+      }
+    },
+    async uploadCloudBackup() {
+      await this.ensureCloudToken()
+      const token = this.cloudConfig?.token
+      const path = this.cloudConfig?.path
+      if (!token || !path) {
+        throw new Error('Token e percorso richiesti per il backup cloud.')
+      }
+
+      const payload = this.getCloudPayload()
+      const content = JSON.stringify(payload)
+
+      if (this.cloudProvider === 'dropbox') {
+        await uploadDropboxBackup(token, path, content)
+      } else if (this.cloudProvider === 'google-drive') {
+        await uploadGoogleDriveBackup(token, path, content)
+      } else if (this.cloudProvider === 'one-drive') {
+        await uploadOneDriveBackup(token, path, content)
+      }
+    },
+    async downloadCloudBackup(): Promise<PocketBloomData | null> {
+      await this.ensureCloudToken()
+      const token = this.cloudConfig?.token
+      const path = this.cloudConfig?.path
+      if (!token || !path) {
+        return null
+      }
+
+      let content = ''
+      if (this.cloudProvider === 'dropbox') {
+        content = await downloadDropboxBackup(token, path)
+      } else if (this.cloudProvider === 'google-drive') {
+        content = await downloadGoogleDriveBackup(token, path)
+      } else if (this.cloudProvider === 'one-drive') {
+        content = await downloadOneDriveBackup(token, path)
+      }
+
+      if (!content) {
+        return null
+      }
+
+      return JSON.parse(content) as PocketBloomData
+    },
+    async verifyCloudCredentials(): Promise<boolean> {
+      await this.ensureCloudToken()
+      const token = this.cloudConfig?.token
+      if (!token) {
+        return false
+      }
+
+      if (this.cloudProvider === 'dropbox') {
+        await verifyDropboxToken(token)
+      } else if (this.cloudProvider === 'google-drive') {
+        await verifyGoogleDriveToken(token)
+      } else if (this.cloudProvider === 'one-drive') {
+        await verifyOneDriveToken(token)
+      }
+
+      return true
+    },
+    async syncCloudOnStartup() {
+      const token = this.cloudConfig?.token
+      const path = this.cloudConfig?.path
+      if (!token || !path || this.cloudProvider === 'none') {
+        return
+      }
+
+      try {
+        const cloudData = await this.downloadCloudBackup()
+        if (!cloudData) {
+          return
+        }
+
+        const localData = loadData()
+        const cloudTimestamp = cloudData.lastSync ? new Date(cloudData.lastSync).getTime() : 0
+        const localTimestamp = localData?.lastSync ? new Date(localData.lastSync).getTime() : 0
+
+        if (!localData || cloudTimestamp > localTimestamp) {
+          await this.importData(cloudData)
+        } else if (this.autoBackup && localTimestamp > cloudTimestamp) {
+          await this.uploadCloudBackup()
+        }
+      } catch (error) {
+        console.warn('Cloud sync startup failed:', error)
+      }
+    },
+    async save() {
       const payload: PocketBloomData = {
         baseCurrency: this.baseCurrency,
         theme: this.theme,
         cloudProvider: this.cloudProvider,
+        cloudConfig: this.cloudConfig,
         autoBackup: this.autoBackup,
         supportedCurrencies: this.supportedCurrencies,
         investmentCategories: this.investmentCategories,
@@ -104,6 +266,12 @@ export const useAppStore = defineStore('app', {
         lastSync: new Date().toISOString(),
       }
       saveData(payload)
+
+      if (this.autoBackup && this.cloudProvider !== 'none') {
+        void this.uploadCloudBackup().catch((error) => {
+          console.warn('Cloud backup failed:', error)
+        })
+      }
     },
     clear() {
       clearData()
@@ -113,6 +281,7 @@ export const useAppStore = defineStore('app', {
       this.investmentLots = []
       this.baseCurrency = 'EUR'
       this.cloudProvider = 'none'
+      this.cloudConfig = {}
       this.autoBackup = false
       this.supportedCurrencies = ['EUR', 'CHF']
       this.investmentCategories = ['ETF', 'Crypto']
@@ -175,10 +344,11 @@ export const useAppStore = defineStore('app', {
       this.entries = this.entries.filter((entry) => entry.id !== entryId)
       this.save()
     },
-    importData(data: PocketBloomData) {
+    async importData(data: PocketBloomData) {
       this.baseCurrency = data.baseCurrency
       this.theme = data.theme
-      this.cloudProvider = data.cloudProvider ?? 'none'
+      this.cloudProvider = isCloudProvider(data.cloudProvider) ? data.cloudProvider : 'none'
+      this.cloudConfig = data.cloudConfig ?? {}
       this.autoBackup = data.autoBackup ?? false
       this.supportedCurrencies = data.supportedCurrencies ?? ['EUR', 'CHF']
       this.investmentCategories = data.investmentCategories ?? ['ETF', 'Crypto']
@@ -186,7 +356,7 @@ export const useAppStore = defineStore('app', {
       this.entries = data.entries
       this.investments = data.investments
       this.investmentLots = data.investmentLots ?? []
-      this.save()
+      await this.save()
     },
   },
 })

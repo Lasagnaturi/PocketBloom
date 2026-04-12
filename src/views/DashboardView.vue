@@ -33,39 +33,6 @@
     </div>
 
     <div class="card">
-      <div class="dashboard-card-header">
-        <div>
-          <h3>Valore attuale investimenti</h3>
-          <p class="helper-text">Aggiorna i prezzi in tempo reale tramite proxy Yahoo.</p>
-        </div>
-        <button class="btn-secondary btn-small" type="button" @click="refreshPrices" :disabled="loading">
-          {{ loading ? 'Aggiornando...' : 'Aggiorna prezzi' }}
-        </button>
-      </div>
-
-      <div v-if="investmentValues.length" class="investment-chart">
-        <div class="summary-row">
-          <span>Totale investimenti</span>
-          <span v-for="item in totalValues" :key="item.currency">{{ formatBalance(item.total, item.currency) }}</span>
-        </div>
-
-        <div class="chart-row" v-for="item in investmentValues" :key="item.key">
-          <div class="chart-row-title">
-            <span>{{ item.ticker }}</span>
-            <span class="muted">{{ item.currency }}</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill" :style="{ width: `${(item.value / maxValue) * 100}%` }"></div>
-          </div>
-          <div class="chart-value">{{ formatBalance(item.value, item.currency) }}</div>
-        </div>
-      </div>
-
-      <p v-else class="helper-text">Nessun investimento disponibile per il grafico.</p>
-      <p v-if="error" class="helper-text error-text">{{ error }}</p>
-    </div>
-
-    <div class="card">
       <h3>Ultimi conti aggiunti</h3>
       <div v-if="recentAccounts.length" class="table-wrapper">
         <table class="table">
@@ -114,9 +81,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useStock } from '@/composables/useStock'
 
 const store = useAppStore()
 const currentYear = new Date().getFullYear()
@@ -141,66 +107,6 @@ const recentEntries = computed(() => {
   return [...entries].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 5)
 })
 const baseCurrency = computed(() => store.baseCurrency)
-const { prices, loading, error, fetchPrices } = useStock()
-
-const uniqueInvestments = computed(() => {
-  const map = new Map<string, { ticker: string; currency: string }>()
-  store.investments.forEach((investment) => {
-    const key = `${investment.ticker.toUpperCase()}:${investment.currency}`
-    if (!map.has(key)) {
-      map.set(key, {
-        ticker: investment.ticker.toUpperCase(),
-        currency: investment.currency,
-      })
-    }
-  })
-  return Array.from(map.values())
-})
-
-const tickersToFetch = computed(() => uniqueInvestments.value.map((item) => item.ticker))
-
-const totalQuantity = (ticker: string) => {
-  return store.investmentLots
-    .filter((lot) => lot.ticker.toUpperCase() === ticker.toUpperCase())
-    .reduce((sum, lot) => sum + lot.quantity, 0)
-}
-
-const investmentValues = computed(() => {
-  return uniqueInvestments.value.map((item) => {
-    const quantity = totalQuantity(item.ticker)
-    const price = prices.value[item.ticker] ?? 0
-    return {
-      key: `${item.ticker}:${item.currency}`,
-      ticker: item.ticker,
-      currency: item.currency,
-      quantity,
-      price,
-      value: Number((price * quantity).toFixed(2)),
-    }
-  })
-})
-
-const maxValue = computed(() => Math.max(...investmentValues.value.map((item) => item.value), 1))
-
-const totalValues = computed(() => {
-  const totals = new Map<string, number>()
-  investmentValues.value.forEach((item) => {
-    totals.set(item.currency, (totals.get(item.currency) ?? 0) + item.value)
-  })
-  return Array.from(totals.entries()).map(([currency, total]) => ({ currency, total }))
-})
-
-const refreshPrices = async () => {
-  await fetchPrices(tickersToFetch.value)
-}
-
-onMounted(() => {
-  refreshPrices()
-})
-
-watch(tickersToFetch, () => {
-  refreshPrices()
-})
 
 const formatBalance = (value: number, currency: string) => {
   return new Intl.NumberFormat('it-IT', {

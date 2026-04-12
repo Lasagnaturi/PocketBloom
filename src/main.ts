@@ -11,13 +11,14 @@ app.use(pinia)
 app.use(router)
 
 const appStore = useAppStore()
-appStore.init()
-watch(
-  () => appStore.theme.mode,
-  (mode) => {
-    document.documentElement.dataset.theme = mode
-  },
-  { immediate: true }
-)
+appStore.init().then(() => {
+  watch(
+    () => appStore.theme.mode,
+    (mode) => {
+      document.documentElement.dataset.theme = mode
+    },
+    { immediate: true }
+  )
 
-app.mount('#app')
+  app.mount('#app')
+})

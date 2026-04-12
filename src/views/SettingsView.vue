@@ -20,6 +20,64 @@
           </select>
         </div>
 
+        <div v-if="settings.cloudProvider !== 'none'" class="form-field">
+          <label class="form-label" for="cloudToken">Access Token</label>
+          <input
+            id="cloudToken"
+            v-model="settings.cloudConfig.token"
+            class="form-input"
+            type="password"
+            :placeholder="tokenPlaceholder"
+          />
+          <p class="helper-text">Inserisci un token di accesso per {{ providerName }}. Il login rimane persistente finché il token rimane valido.</p>
+        </div>
+
+        <div v-if="settings.cloudProvider !== 'none'" class="form-field">
+          <label class="form-label" for="cloudRefreshToken">Refresh Token</label>
+          <input
+            id="cloudRefreshToken"
+            v-model="settings.cloudConfig.refreshToken"
+            class="form-input"
+            type="password"
+            placeholder="Inserisci il refresh token"
+          />
+          <p class="helper-text">Inserisci un refresh token per rinnovare automaticamente l'access token quando scade.</p>
+        </div>
+
+        <div v-if="settings.cloudProvider === 'google-drive' || settings.cloudProvider === 'one-drive'" class="form-field">
+          <label class="form-label" for="cloudClientId">Client ID</label>
+          <input
+            id="cloudClientId"
+            v-model="settings.cloudConfig.clientId"
+            class="form-input"
+            placeholder="Inserisci il client ID"
+          />
+          <p class="helper-text">Il client ID serve per rinnovare il token con Google Drive o OneDrive.</p>
+        </div>
+
+        <div v-if="settings.cloudProvider === 'google-drive' || settings.cloudProvider === 'one-drive'" class="form-field">
+          <label class="form-label" for="cloudClientSecret">Client Secret</label>
+          <input
+            id="cloudClientSecret"
+            v-model="settings.cloudConfig.clientSecret"
+            class="form-input"
+            type="password"
+            placeholder="Inserisci il client secret (se richiesto)"
+          />
+          <p class="helper-text">Il client secret è necessario per alcune app Google/OneDrive. Lascia vuoto se non usi un client secret.</p>
+        </div>
+
+        <div v-if="settings.cloudProvider !== 'none'" class="form-field">
+          <label class="form-label" for="cloudPath">Percorso backup</label>
+          <input
+            id="cloudPath"
+            v-model="settings.cloudConfig.path"
+            class="form-input"
+            placeholder="/pocketbloom-backup.json"
+          />
+          <p class="helper-text">Il file verrà salvato in {{ providerName }} in questo percorso o con questo nome.</p>
+        </div>
+
         <div class="form-field">
           <label class="form-label" for="autoBackup">Backup automatico</label>
           <select id="autoBackup" v-model="settings.autoBackup" class="form-select">
@@ -54,13 +112,13 @@
           <button class="btn-primary" type="submit">Salva impostazioni</button>
         </div>
       </form>
-      <p class="helper-text">Valuta base: {{ settings.baseCurrency }}. Backup cloud: {{ settings.cloudProvider === 'none' ? 'disabilitato' : settings.cloudProvider }}.</p>
+      <p class="helper-text">Valuta base: {{ settings.baseCurrency }}. Backup cloud: {{ settings.cloudProvider === 'none' ? 'disabilitato' : providerName }}.</p>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
@@ -69,9 +127,42 @@ const currencyOptions = ['EUR', 'CHF']
 const settings = reactive({
   baseCurrency: store.baseCurrency,
   cloudProvider: store.cloudProvider || 'none',
+  cloudConfig: {
+    token: store.cloudConfig?.token || '',
+    refreshToken: store.cloudConfig?.refreshToken || '',
+    clientId: store.cloudConfig?.clientId || '',
+    clientSecret: store.cloudConfig?.clientSecret || '',
+    path: store.cloudConfig?.path || '/pocketbloom-backup.json',
+  },
   autoBackup: store.autoBackup,
   supportedCurrencies: [...store.supportedCurrencies] as string[],
   investmentCategories: [...store.investmentCategories] as string[],
+})
+
+const providerName = computed(() => {
+  switch (settings.cloudProvider) {
+    case 'dropbox':
+      return 'Dropbox'
+    case 'google-drive':
+      return 'Google Drive'
+    case 'one-drive':
+      return 'OneDrive'
+    default:
+      return 'cloud'
+  }
+})
+
+const tokenPlaceholder = computed(() => {
+  switch (settings.cloudProvider) {
+    case 'dropbox':
+      return 'Inserisci il token Dropbox'
+    case 'google-drive':
+      return 'Inserisci il token Google Drive'
+    case 'one-drive':
+      return 'Inserisci il token OneDrive'
+    default:
+      return 'Inserisci il token'
+  }
 })
 
 const newCategory = ref('')
@@ -91,6 +182,13 @@ const removeCategory = (index: number) => {
 const saveSettings = () => {
   store.baseCurrency = settings.baseCurrency
   store.cloudProvider = settings.cloudProvider
+  store.cloudConfig = {
+    token: settings.cloudConfig.token?.trim(),
+    refreshToken: settings.cloudConfig.refreshToken?.trim(),
+    clientId: settings.cloudConfig.clientId?.trim(),
+    clientSecret: settings.cloudConfig.clientSecret?.trim(),
+    path: settings.cloudConfig.path?.trim(),
+  }
   store.autoBackup = settings.autoBackup
   store.supportedCurrencies = [...settings.supportedCurrencies]
   store.investmentCategories = [...settings.investmentCategories]

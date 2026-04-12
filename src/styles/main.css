@@ -39,6 +39,8 @@
 html, body {
   margin: 0;
   min-height: 100%;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -48,6 +50,80 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+.app-shell,
+.app-content,
+.page-container,
+.card,
+.table-wrapper,
+.table,
+.dashboard-header,
+.summary-grid {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card {
+  width: 100%;
+  overflow: hidden;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.table th,
+.table td {
+  white-space: nowrap;
+}
+
+.form-inline {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 700px) {
+  .form-inline {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .compact-input,
+  .inline-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .inline-field {
+    display: grid;
+  }
+
+  .form-field {
+    width: 100%;
+  }
+
+  .table th,
+  .table td {
+    padding: 12px 10px;
+  }
+}
+
+.app-shell,
+.app-content,
+.page-container,
+.card,
+.table-wrapper,
+.dashboard-header,
+.summary-grid {
+  min-width: 0;
+  max-width: 100%;
 }
 
 button, input, select, textarea {
@@ -218,6 +294,27 @@ button, input, select, textarea {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.dashboard-header > * {
+  min-width: 0;
+}
+
+.dashboard-header .time-selector {
+  min-width: 0;
+  width: auto;
+}
+
+@media (max-width: 700px) {
+  .dashboard-header {
+    align-items: flex-start;
+  }
+
+  .dashboard-header .time-selector {
+    width: 100%;
+    max-width: 100%;
+  }
 }
 
 .dashboard-header .eyebrow {
@@ -347,6 +444,19 @@ button, input, select, textarea {
 
 .btn-tertiary + .btn-tertiary {
   margin-left: 10px;
+}
+
+.table-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.table th,
+.table td {
+  vertical-align: middle;
 }
 
 .btn-tertiary:hover {

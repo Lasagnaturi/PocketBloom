@@ -123,10 +123,12 @@
               <td>{{ account.closedAt ? formatDate(account.closedAt) : '-' }}</td>
               <td>{{ account.closed ? 'Chiuso' : 'Aperto' }}</td>
               <td>
-                <button class="btn-tertiary" type="button" @click="toggleAccountStatus(account.id)">
-                  {{ account.closed ? 'Riapri' : 'Chiudi' }}
-                </button>
-                <button class="btn-tertiary" type="button" @click="removeAccount(account.id)">Elimina</button>
+                <div class="table-actions">
+                  <button class="btn-secondary" type="button" @click="toggleAccountStatus(account.id)">
+                    {{ account.closed ? 'Riapri' : 'Chiudi' }}
+                  </button>
+                  <button class="btn-tertiary" type="button" @click="removeAccount(account.id)">Elimina</button>
+                </div>
               </td>
             </tr>
           </tbody>

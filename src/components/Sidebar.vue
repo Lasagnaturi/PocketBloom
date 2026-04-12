@@ -7,7 +7,7 @@
   >
     <div class="sidebar-brand">
       <span class="brand-icon">🌸</span>
-      <h1 v-if="!collapsed || hovered">PocketBloom</h1>
+      <h1 v-if="!collapsed || hovered || isMobile">PocketBloom</h1>
       <button class="mobile-menu-toggle" type="button" @click="toggleMobileMenu" aria-label="Apri menu">
         ☰
       </button>
@@ -16,37 +16,37 @@
     <nav>
       <ul class="nav-list">
         <li>
-          <RouterLink to="/">
+          <RouterLink to="/" @click="closeMobileMenu">
             <span class="nav-icon">🏠</span>
             <span class="nav-text">Dashboard</span>
           </RouterLink>
         </li>
         <li>
-          <RouterLink to="/conti">
+          <RouterLink to="/conti" @click="closeMobileMenu">
             <span class="nav-icon">💼</span>
             <span class="nav-text">Conti</span>
           </RouterLink>
         </li>
         <li>
-          <RouterLink to="/entrate">
+          <RouterLink to="/entrate" @click="closeMobileMenu">
             <span class="nav-icon">💰</span>
             <span class="nav-text">Entrate</span>
           </RouterLink>
         </li>
         <li>
-          <RouterLink to="/investimenti">
+          <RouterLink to="/investimenti" @click="closeMobileMenu">
             <span class="nav-icon">📈</span>
             <span class="nav-text">Investimenti</span>
           </RouterLink>
         </li>
         <li>
-          <RouterLink to="/backup">
+          <RouterLink to="/backup" @click="closeMobileMenu">
             <span class="nav-icon">☁️</span>
             <span class="nav-text">Backup</span>
           </RouterLink>
         </li>
         <li>
-          <RouterLink to="/impostazioni">
+          <RouterLink to="/impostazioni" @click="closeMobileMenu">
             <span class="nav-icon">⚙️</span>
             <span class="nav-text">Impostazioni</span>
           </RouterLink>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
@@ -81,7 +81,30 @@ const toggleTheme = () => {
   appStore.toggleTheme()
 }
 
+const isMobile = ref(false)
+let mediaQuery: MediaQueryList | null = null
+
+const updateMobile = () => {
+  isMobile.value = window.matchMedia('(max-width: 900px)').matches
+}
+
 const toggleMobileMenu = () => {
   mobileOpen.value = !mobileOpen.value
 }
+
+const closeMobileMenu = () => {
+  mobileOpen.value = false
+}
+
+onMounted(() => {
+  updateMobile()
+  mediaQuery = window.matchMedia('(max-width: 900px)')
+  mediaQuery.addEventListener('change', updateMobile)
+})
+
+onUnmounted(() => {
+  if (mediaQuery) {
+    mediaQuery.removeEventListener('change', updateMobile)
+  }
+})
 </script>

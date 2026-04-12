@@ -4,7 +4,7 @@ export function useStock() {
   const prices = ref<Record<string, number | null>>({})
   const loading = ref(false)
   const error = ref<string | null>(null)
-  const apiBase = import.meta.env.VITE_YAHOO_PROXY_URL || '/api/yahoo'
+  const apiBase = import.meta.env.VITE_YAHOO_PROXY_URL || 'https://yahoo-proxy-xi.vercel.app/api/yahoo'
 
   async function fetchPrices(tickers: string[]) {
     const normalized = tickers

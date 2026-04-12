@@ -12,11 +12,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api/yahoo': {
-        target: 'https://query1.finance.yahoo.com',
+      '/api/finnhub': {
+        target: 'https://finnhub.io',
         changeOrigin: true,
         secure: true,
-        rewrite: (path) => path.replace(/^\/api\/yahoo/, '/v7/finance/quote'),
+        rewrite: (path) => path.replace(/^\/api\/finnhub/, '/api/v1/quote'),
       },
     },
   },

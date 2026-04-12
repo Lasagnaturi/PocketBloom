@@ -12,8 +12,12 @@
 
       <form v-if="formOpen" class="form-grid" @submit.prevent="submitInvestment">
         <div class="form-field">
-          <label class="form-label" for="investmentTicker">Ticker Yahoo</label>
+          <label class="form-label" for="investmentTicker">Ticker</label>
           <input id="investmentTicker" v-model="form.ticker" class="form-input" placeholder="es. AAPL, BTC-USD" required>
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="investmentIsin">ISIN</label>
+          <input id="investmentIsin" v-model="form.isin" class="form-input" placeholder="Es. US0378331005">
         </div>
         <div class="form-field">
           <label class="form-label" for="investmentCategory">Categoria</label>
@@ -25,11 +29,6 @@
           <div class="inline-field">
             <label class="form-label compact-label" for="manualPrice">Prezzo</label>
             <input id="manualPrice" v-model.number="form.manualPrice" type="number" step="0.01" class="form-input compact-input" placeholder="Prezzo" required />
-          </div>
-          <div class="inline-field" style="margin-top: 1.4rem;">
-            <button class="btn-secondary compact-button" type="button" @click="fetchTickerPrice" :disabled="priceLoading || !form.ticker">
-              {{ priceLoading ? 'Recupero...' : 'Recupera valore' }}
-            </button>
           </div>
           <div class="inline-field">
             <label class="form-label compact-label" for="investmentCurrency">Valuta</label>
@@ -45,8 +44,6 @@
             <label class="form-label compact-label" for="initialLotDate">Data</label>
             <input id="initialLotDate" v-model="form.initialLotDate" class="form-input compact-input" type="date" required />
           </div>
-          <span v-if="tickerPrice !== null" class="helper-text">Ultimo: {{ formatBalance(tickerPrice, form.currency) }}</span>
-          <span v-if="priceError" class="helper-text error-text">{{ priceError }}</span>
         </div>
         <div class="form-field">
           <label class="form-label" for="investmentNote">Note</label>
@@ -61,7 +58,7 @@
     <article class="card card-collapsible">
       <div class="collapsible-header">
         <div>
-          <h3>Aggiorna lotti</h3>
+          <h3>Aggiungi lotti</h3>
         </div>
         <button class="btn-secondary btn-icon" type="button" @click="toggleLotForm">
           {{ lotFormOpen ? '−' : '+' }}
@@ -124,7 +121,7 @@
             <tr>
               <th>Ticker</th>
               <th>Categoria</th>
-              <th>Ultimo prezzo</th>
+              <th>Prezzo medio acquisto</th>
               <th>Quantità totale</th>
               <th>Valore stimato</th>
               <th />
@@ -132,13 +129,34 @@
           </thead>
           <tbody>
             <tr v-for="investment in investments" :key="investment.id">
-              <td>{{ investment.ticker }}</td>
-              <td>{{ investment.category }}</td>
-              <td>{{ investment.lastPrice ? formatBalance(investment.lastPrice, investment.currency) : '-' }}</td>
-              <td>{{ formatQuantity(totalQuantity(investment.ticker)) }}</td>
-              <td>{{ investment.lastPrice ? formatBalance(investment.lastPrice * totalQuantity(investment.ticker), investment.currency) : '-' }}</td>
               <td>
-                <button class="btn-tertiary" type="button" @click="removeInvestment(investment.id)">Elimina</button>
+                <a
+                  :href="`https://finance.yahoo.com/quote/${encodeURIComponent(investment.ticker)}`"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {{ investment.ticker }}
+                </a>
+              </td>
+              <td>{{ investment.category }}</td>
+              <td>
+                <span v-if="averagePurchasePrice(investment.ticker) !== null">
+                  {{ formatBalance(averagePurchasePrice(investment.ticker)!, investment.currency) }}
+                </span>
+                <span v-else>-</span>
+              </td>
+              <td>{{ formatQuantity(totalQuantity(investment.ticker)) }}</td>
+              <td>
+                <span v-if="averagePurchasePrice(investment.ticker) !== null">
+                  {{ formatBalance(averagePurchasePrice(investment.ticker)! * totalQuantity(investment.ticker), investment.currency) }}
+                </span>
+                <span v-else>-</span>
+              </td>
+              <td>
+                <div style="display: inline-flex; gap: 0.5rem; flex-wrap: wrap;">
+                  <button class="btn-secondary" type="button" @click="openSellModal(investment)">Vendi</button>
+                  <button class="btn-tertiary" type="button" @click="removeInvestment(investment.id)">Elimina</button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -148,7 +166,7 @@
     </div>
 
     <div class="card">
-      <h3>Storico lotti</h3>
+      <h3>Lotti acquistati</h3>
       <div v-if="investmentLots.length" class="table-wrapper">
         <table class="table">
           <thead>
@@ -177,6 +195,31 @@
       </div>
       <p v-else>Non ci sono lotti acquistati. Usa il form per registrare un nuovo acquisto.</p>
     </div>
+
+    <div v-if="sellModalOpen" class="modal-overlay" @click.self="closeSellModal">
+      <div class="modal-card">
+        <h3>Vendi lotti - {{ selectedSaleInvestment?.ticker }}</h3>
+        <form class="form-grid" @submit.prevent="submitSellLots">
+          <div class="form-field">
+            <label class="form-label" for="sellDate">Data vendita</label>
+            <input id="sellDate" v-model="sellForm.date" type="date" class="form-input" required />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="sellQuantity">Quantità venduta</label>
+            <input id="sellQuantity" v-model.number="sellForm.quantity" type="number" step="0.0001" class="form-input" placeholder="Quantità" required />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="sellPrice">Prezzo vendita</label>
+            <input id="sellPrice" v-model.number="sellForm.price" type="number" step="0.01" class="form-input" placeholder="Prezzo" required />
+          </div>
+          <span v-if="sellError" class="helper-text error-text">{{ sellError }}</span>
+          <div class="form-field form-inline" style="justify-content: flex-end; gap: 12px;">
+            <button class="btn-tertiary" type="button" @click="closeSellModal">Annulla</button>
+            <button class="btn-primary" type="submit">Conferma vendita</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -192,12 +235,13 @@ const investmentCategories = computed(() => store.investmentCategories)
 const currencyOptions = computed(() => store.supportedCurrencies)
 const formOpen = ref(false)
 const lotFormOpen = ref(false)
-const priceLoading = ref(false)
-const priceError = ref('')
-const tickerPrice = ref<number | null>(null)
+const sellModalOpen = ref(false)
+const selectedSaleInvestment = ref<Investment | null>(null)
+const sellError = ref('')
 
 const form = reactive({
   ticker: '',
+  isin: '',
   category: store.investmentCategories[0] || 'ETF',
   currency: store.supportedCurrencies[0] || 'EUR',
   note: '',
@@ -206,7 +250,12 @@ const form = reactive({
   initialLotDate: new Date().toISOString().slice(0, 10),
 })
 
-const priceCache = reactive<Record<string, { price: number; fetchedAt: number }>>({})
+const sellForm = reactive({
+  quantity: 0,
+  price: 0,
+  date: new Date().toISOString().slice(0, 10),
+})
+
 const lotDate = ref(new Date().toISOString().slice(0, 10))
 const lotInputs = reactive<Record<string, { quantity: number; purchasePrice: number }>>({})
 
@@ -235,50 +284,19 @@ const toggleLotForm = () => {
   lotFormOpen.value = !lotFormOpen.value
 }
 
-const fetchTickerPrice = async () => {
-  const symbol = form.ticker.trim().toUpperCase()
-  if (!symbol) {
-    return
-  }
+const openSellModal = (investment: Investment) => {
+  selectedSaleInvestment.value = investment
+  sellForm.quantity = 0
+  sellForm.price = investment.lastPrice ?? 0
+  sellForm.date = new Date().toISOString().slice(0, 10)
+  sellError.value = ''
+  sellModalOpen.value = true
+}
 
-  const cached = priceCache[symbol]
-  const now = Date.now()
-  if (cached && now - cached.fetchedAt < 15 * 60 * 1000) {
-    tickerPrice.value = cached.price
-    priceError.value = ''
-    return
-  }
-
-  priceError.value = ''
-  priceLoading.value = true
-  tickerPrice.value = null
-
-  try {
-    const response = await fetch(`/api/yahoo?symbols=${encodeURIComponent(symbol)}`)
-    if (!response.ok) {
-      if (response.status === 429) {
-        priceError.value = 'Servizio quote temporaneamente non disponibile. Riprova tra qualche minuto.'
-      }
-      return
-    }
-
-    const data = await response.json()
-    const quote = data?.quoteResponse?.result?.[0]
-    if (!quote || quote.regularMarketPrice == null) {
-      priceError.value = 'Ticker non trovato.'
-      return
-    }
-
-    tickerPrice.value = Number(quote.regularMarketPrice)
-    priceCache[symbol] = {
-      price: tickerPrice.value,
-      fetchedAt: now,
-    }
-  } catch (error) {
-    priceError.value = 'Impossibile recuperare il valore per il ticker.'
-  } finally {
-    priceLoading.value = false
-  }
+const closeSellModal = () => {
+  sellModalOpen.value = false
+  selectedSaleInvestment.value = null
+  sellError.value = ''
 }
 
 const submitInvestment = () => {
@@ -287,42 +305,41 @@ const submitInvestment = () => {
   }
 
   const ticker = form.ticker.trim().toUpperCase()
-  const price = form.manualPrice != null ? form.manualPrice : tickerPrice.value
+  const price = form.manualPrice != null ? form.manualPrice : undefined
   const investment: Investment = {
     id: createId('investment'),
     ticker,
+    isin: form.isin.trim() || undefined,
     category: form.category,
     currency: form.currency,
     note: form.note.trim() || undefined,
-    lastPrice: price ?? undefined,
+    lastPrice: price,
     lastPriceAt: price != null ? new Date().toISOString() : undefined,
   }
 
   store.addInvestment(investment)
 
-  const lotPrice = price
-  if (form.initialLotQuantity > 0 && lotPrice != null && form.initialLotDate) {
+  if (form.initialLotQuantity > 0 && price != null && form.initialLotDate) {
     const lot: InvestmentLot = {
       id: createId('investment-lot'),
       ticker,
       category: form.category,
       currency: form.currency,
       quantity: Number(form.initialLotQuantity),
-      purchasePrice: Number(lotPrice),
+      purchasePrice: Number(price),
       date: form.initialLotDate,
     }
     store.addInvestmentLot(lot)
   }
 
   form.ticker = ''
+  form.isin = ''
   form.category = store.investmentCategories[0] || 'ETF'
   form.currency = store.supportedCurrencies[0] || 'EUR'
   form.note = ''
   form.manualPrice = null
   form.initialLotQuantity = 0
   form.initialLotDate = new Date().toISOString().slice(0, 10)
-  tickerPrice.value = null
-  priceError.value = ''
 }
 
 const submitBatchLots = () => {
@@ -361,14 +378,74 @@ const removeLot = (id: string) => {
   store.removeInvestmentLot(id)
 }
 
+const removeLotQuantity = (ticker: string, quantity: number) => {
+  let remaining = quantity
+  const relevantLots = investmentLots.value
+    .filter((lot) => lot.ticker.toUpperCase() === ticker.toUpperCase())
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  for (const lot of relevantLots) {
+    if (remaining <= 0) {
+      break
+    }
+
+    if (lot.quantity <= remaining) {
+      remaining -= lot.quantity
+      store.removeInvestmentLot(lot.id)
+    } else {
+      const updatedLot: InvestmentLot = {
+        ...lot,
+        quantity: Number((lot.quantity - remaining).toFixed(4)),
+      }
+      remaining = 0
+      store.removeInvestmentLot(lot.id)
+      store.addInvestmentLot(updatedLot)
+    }
+  }
+}
+
+const submitSellLots = () => {
+  if (!selectedSaleInvestment.value) {
+    return
+  }
+
+  if (sellForm.quantity <= 0 || sellForm.price <= 0) {
+    sellError.value = 'Inserisci quantità e prezzo validi.'
+    return
+  }
+
+  const total = totalQuantity(selectedSaleInvestment.value.ticker)
+  if (sellForm.quantity > total) {
+    sellError.value = 'La quantità venduta supera il totale disponibile.'
+    return
+  }
+
+  removeLotQuantity(selectedSaleInvestment.value.ticker, sellForm.quantity)
+  selectedSaleInvestment.value.lastPrice = sellForm.price
+  selectedSaleInvestment.value.lastPriceAt = new Date().toISOString()
+  closeSellModal()
+}
+
 const totalQuantity = (ticker: string) => {
   return investmentLots.value
     .filter((lot) => lot.ticker.toUpperCase() === ticker.toUpperCase())
     .reduce((sum, lot) => sum + lot.quantity, 0)
 }
 
+const averagePurchasePrice = (ticker: string) => {
+  const lots = investmentLots.value.filter((lot) => lot.ticker.toUpperCase() === ticker.toUpperCase())
+  const totalQty = lots.reduce((sum, lot) => sum + lot.quantity, 0)
+
+  if (totalQty === 0) {
+    return null
+  }
+
+  const totalCost = lots.reduce((sum, lot) => sum + lot.purchasePrice * lot.quantity, 0)
+  return totalCost / totalQty
+}
+
 const formatQuantity = (value: number) => {
-  return value.toFixed(4)
+  return value.toFixed(4).replace('.', ',')
 }
 
 const formatDate = (dateString: string) => {

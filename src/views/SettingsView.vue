@@ -11,63 +11,22 @@
         </div>
 
         <div class="form-field">
-          <label class="form-label" for="cloudProvider">Provider backup cloud</label>
-          <select id="cloudProvider" v-model="settings.cloudProvider" class="form-select">
-            <option value="none">Nessuno</option>
-            <option value="google-drive">Google Drive</option>
-            <option value="dropbox">Dropbox</option>
-            <option value="one-drive">OneDrive</option>
-          </select>
-        </div>
-
-        <div v-if="settings.cloudProvider !== 'none'" class="form-field">
-          <label class="form-label" for="cloudToken">Access Token</label>
+          <label class="form-label" for="dropboxAppKey">Dropbox App Key</label>
           <input
-            id="cloudToken"
-            v-model="settings.cloudConfig.token"
+            id="dropboxAppKey"
+            v-model="settings.cloudConfig.appKey"
             class="form-input"
-            type="password"
-            :placeholder="tokenPlaceholder"
+            placeholder="Inserisci la App Key Dropbox"
           />
-          <p class="helper-text">Inserisci un token di accesso per {{ providerName }}. Il login rimane persistente finché il token rimane valido.</p>
+          <p class="helper-text">La App Key serve per avviare il login OAuth con Dropbox. Non devi inserire manualmente un access token.</p>
         </div>
 
-        <div v-if="settings.cloudProvider !== 'none'" class="form-field">
-          <label class="form-label" for="cloudRefreshToken">Refresh Token</label>
-          <input
-            id="cloudRefreshToken"
-            v-model="settings.cloudConfig.refreshToken"
-            class="form-input"
-            type="password"
-            placeholder="Inserisci il refresh token"
-          />
-          <p class="helper-text">Inserisci un refresh token per rinnovare automaticamente l'access token quando scade.</p>
+        <div class="form-field" style="display: flex; gap: 12px; flex-wrap: wrap;">
+          <button class="btn-primary" type="button" @click="connectDropbox">Connetti a Dropbox</button>
+          <button class="btn-secondary" type="button" @click="disconnectDropbox" v-if="isConnected">Disconnetti Dropbox</button>
         </div>
 
-        <div v-if="settings.cloudProvider === 'google-drive' || settings.cloudProvider === 'one-drive'" class="form-field">
-          <label class="form-label" for="cloudClientId">Client ID</label>
-          <input
-            id="cloudClientId"
-            v-model="settings.cloudConfig.clientId"
-            class="form-input"
-            placeholder="Inserisci il client ID"
-          />
-          <p class="helper-text">Il client ID serve per rinnovare il token con Google Drive o OneDrive.</p>
-        </div>
-
-        <div v-if="settings.cloudProvider === 'google-drive' || settings.cloudProvider === 'one-drive'" class="form-field">
-          <label class="form-label" for="cloudClientSecret">Client Secret</label>
-          <input
-            id="cloudClientSecret"
-            v-model="settings.cloudConfig.clientSecret"
-            class="form-input"
-            type="password"
-            placeholder="Inserisci il client secret (se richiesto)"
-          />
-          <p class="helper-text">Il client secret è necessario per alcune app Google/OneDrive. Lascia vuoto se non usi un client secret.</p>
-        </div>
-
-        <div v-if="settings.cloudProvider !== 'none'" class="form-field">
+        <div class="form-field">
           <label class="form-label" for="cloudPath">Percorso backup</label>
           <input
             id="cloudPath"
@@ -75,7 +34,7 @@
             class="form-input"
             placeholder="/pocketbloom-backup.json"
           />
-          <p class="helper-text">Il file verrà salvato in {{ providerName }} in questo percorso o con questo nome.</p>
+          <p class="helper-text">Il file verrà salvato su Dropbox con questo nome o percorso.</p>
         </div>
 
         <div class="form-field">
@@ -112,26 +71,31 @@
           <button class="btn-primary" type="submit">Salva impostazioni</button>
         </div>
       </form>
-      <p class="helper-text">Valuta base: {{ settings.baseCurrency }}. Backup cloud: {{ settings.cloudProvider === 'none' ? 'disabilitato' : providerName }}.</p>
+
+      <p class="helper-text">Valuta base: {{ settings.baseCurrency }}. Stato Dropbox: {{ connectionStatus }}.</p>
+      <p class="helper-text">Una volta connesso, PocketBloom gestirà automaticamente l'access token e lo rinnoverà con il refresh token.</p>
+      <p v-if="message" class="helper-text">{{ message }}</p>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
+const route = useRoute()
+const router = useRouter()
 const currencyOptions = ['EUR', 'CHF']
+const message = ref('')
 
 const settings = reactive({
   baseCurrency: store.baseCurrency,
-  cloudProvider: store.cloudProvider || 'none',
   cloudConfig: {
+    appKey: store.cloudConfig?.appKey || '',
     token: store.cloudConfig?.token || '',
     refreshToken: store.cloudConfig?.refreshToken || '',
-    clientId: store.cloudConfig?.clientId || '',
-    clientSecret: store.cloudConfig?.clientSecret || '',
     path: store.cloudConfig?.path || '/pocketbloom-backup.json',
   },
   autoBackup: store.autoBackup,
@@ -139,33 +103,18 @@ const settings = reactive({
   investmentCategories: [...store.investmentCategories] as string[],
 })
 
-const providerName = computed(() => {
-  switch (settings.cloudProvider) {
-    case 'dropbox':
-      return 'Dropbox'
-    case 'google-drive':
-      return 'Google Drive'
-    case 'one-drive':
-      return 'OneDrive'
-    default:
-      return 'cloud'
-  }
-})
-
-const tokenPlaceholder = computed(() => {
-  switch (settings.cloudProvider) {
-    case 'dropbox':
-      return 'Inserisci il token Dropbox'
-    case 'google-drive':
-      return 'Inserisci il token Google Drive'
-    case 'one-drive':
-      return 'Inserisci il token OneDrive'
-    default:
-      return 'Inserisci il token'
-  }
-})
-
 const newCategory = ref('')
+
+const isConnected = computed(() => store.cloudProvider === 'dropbox' && !!store.cloudConfig?.token)
+const connectionStatus = computed(() => {
+  if (store.cloudProvider !== 'dropbox') {
+    return 'Non connesso'
+  }
+  if (!store.cloudConfig?.token) {
+    return 'Token Dropbox non impostato'
+  }
+  return 'Connesso a Dropbox'
+})
 
 const addCategory = () => {
   const name = newCategory.value.trim()
@@ -181,12 +130,10 @@ const removeCategory = (index: number) => {
 
 const saveSettings = () => {
   store.baseCurrency = settings.baseCurrency
-  store.cloudProvider = settings.cloudProvider
   store.cloudConfig = {
-    token: settings.cloudConfig.token?.trim(),
-    refreshToken: settings.cloudConfig.refreshToken?.trim(),
-    clientId: settings.cloudConfig.clientId?.trim(),
-    clientSecret: settings.cloudConfig.clientSecret?.trim(),
+    appKey: settings.cloudConfig.appKey?.trim(),
+    token: store.cloudConfig?.token,
+    refreshToken: store.cloudConfig?.refreshToken,
     path: settings.cloudConfig.path?.trim(),
   }
   store.autoBackup = settings.autoBackup
@@ -194,4 +141,36 @@ const saveSettings = () => {
   store.investmentCategories = [...settings.investmentCategories]
   store.save()
 }
+
+const connectDropbox = async () => {
+  try {
+    saveSettings()
+    const authUrl = await store.initiateDropboxAuth()
+    window.location.href = authUrl
+  } catch (error) {
+    console.error(error)
+    message.value = 'Impossibile avviare la connessione a Dropbox. Controlla la App Key.'
+  }
+}
+
+const disconnectDropbox = () => {
+  store.disconnectDropbox()
+  message.value = 'Dropbox disconnesso.'
+}
+
+onMounted(async () => {
+  if (route.query.code && route.query.state) {
+    try {
+      saveSettings()
+      const code = route.query.code as string
+      const state = route.query.state as string
+      await store.completeDropboxAuth(code, state)
+      message.value = 'Dropbox connesso con successo.'
+      router.replace({ path: '/impostazioni', query: {} })
+    } catch (error) {
+      console.error(error)
+      message.value = 'Connessione Dropbox fallita. Riprova.'
+    }
+  }
+})
 </script>

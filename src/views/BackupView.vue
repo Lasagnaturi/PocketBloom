@@ -26,6 +26,10 @@
               <p>{{ cloudProviderLabel }}</p>
             </div>
             <div class="form-field">
+              <label class="form-label">Dropbox App Key</label>
+              <p>{{ store.cloudConfig?.appKey || 'Non impostata' }}</p>
+            </div>
+            <div class="form-field">
               <label class="form-label">Percorso backup</label>
               <p>{{ store.cloudConfig?.path || 'Nessun percorso impostato' }}</p>
             </div>
@@ -34,11 +38,12 @@
               <p>{{ connectionStatus }}</p>
             </div>
           </div>
-          <div class="form-grid" style="margin-top: 10px;">
+          <div class="form-grid" style="margin-top: 10px; gap: 8px;">
             <button class="btn-primary" type="button" @click="manualDownloadCloud" :disabled="!canUseCloud">Scarica dal cloud</button>
             <button class="btn-secondary" type="button" @click="manualUploadCloud" :disabled="!canUseCloud">Carica sul cloud</button>
-            <button class="btn-tertiary" type="button" @click="checkConnection" :disabled="!canUseCloud">{{ verifyButtonLabel }}</button>
+            <button class="btn-tertiary" type="button" @click="checkConnection" :disabled="!canVerifyCloud">{{ verifyButtonLabel }}</button>
           </div>
+          <p class="helper-text" style="margin-top: 8px;">Se non funziona, controlla App Key e Percorso in Impostazioni.</p>
         </div>
       </div>
 
@@ -57,36 +62,18 @@ const store = useAppStore()
 const message = ref('')
 const connectionMessage = ref('')
 
-const cloudProviderLabel = computed(() => {
-  switch (store.cloudProvider) {
-    case 'dropbox':
-      return 'Dropbox'
-    case 'google-drive':
-      return 'Google Drive'
-    case 'one-drive':
-      return 'OneDrive'
-    default:
-      return 'Nessun cloud'
-  }
-})
+const cloudProviderLabel = computed(() => (store.cloudProvider === 'dropbox' ? 'Dropbox' : 'Nessun cloud'))
 
-const supportedCloudProvider = computed(() => store.cloudProvider !== 'none')
-const canUseCloud = computed(() => supportedCloudProvider.value && !!store.cloudConfig?.token && !!store.cloudConfig?.path)
-const verifyButtonLabel = computed(() => {
-  switch (store.cloudProvider) {
-    case 'dropbox':
-      return 'Verifica connessione Dropbox'
-    case 'google-drive':
-      return 'Verifica connessione Google Drive'
-    case 'one-drive':
-      return 'Verifica connessione OneDrive'
-    default:
-      return 'Verifica connessione'
-  }
-})
+const supportedCloudProvider = computed(() => store.cloudProvider === 'dropbox')
+const canUseCloud = computed(() => store.cloudProvider === 'dropbox' && !!store.cloudConfig?.token && !!store.cloudConfig?.path)
+const canVerifyCloud = computed(() => store.cloudProvider === 'dropbox' && !!store.cloudConfig?.appKey)
+const verifyButtonLabel = computed(() => 'Verifica connessione Dropbox')
 const connectionStatus = computed(() => {
-  if (store.cloudProvider === 'none') {
-    return 'Disabilitato'
+  if (store.cloudProvider !== 'dropbox') {
+    return 'Dropbox non connesso'
+  }
+  if (!store.cloudConfig?.appKey) {
+    return 'App Key Dropbox non impostata'
   }
   if (!store.cloudConfig?.token) {
     return 'Token non impostato'
@@ -189,15 +176,20 @@ const checkConnection = async () => {
     message.value = 'Seleziona un provider cloud nelle impostazioni prima di verificare la connessione.'
     return
   }
-  if (!canUseCloud.value) {
-    message.value = `Configura ${cloudProviderLabel.value} in Impostazioni prima di verificare la connessione.`
+  if (!canVerifyCloud.value) {
+    message.value = `Imposta App Key Dropbox nelle Impostazioni prima di verificare la connessione.`
     return
   }
 
   try {
-    await store.verifyCloudCredentials()
-    connectionMessage.value = `Connessione ${cloudProviderLabel.value} valida.`
-    message.value = `Token ${cloudProviderLabel.value} valido.`
+    const valid = await store.verifyCloudCredentials()
+    if (valid) {
+      connectionMessage.value = `Connessione ${cloudProviderLabel.value} valida.`
+      message.value = `Token ${cloudProviderLabel.value} valido.`
+    } else {
+      connectionMessage.value = `Connessione ${cloudProviderLabel.value} non valida.`
+      message.value = `Token ${cloudProviderLabel.value} non valido o scaduto. Riconnetti in Impostazioni.`
+    }
   } catch (error) {
     console.error(error)
     connectionMessage.value = `Connessione ${cloudProviderLabel.value} non valida.`

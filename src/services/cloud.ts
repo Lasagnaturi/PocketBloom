@@ -1,12 +1,8 @@
+const DROPBOX_AUTHORIZE_URL = 'https://www.dropbox.com/oauth2/authorize'
+const DROPBOX_TOKEN_URL = 'https://api.dropbox.com/oauth2/token'
 const DROPBOX_DOWNLOAD_URL = 'https://content.dropboxapi.com/2/files/download'
 const DROPBOX_UPLOAD_URL = 'https://content.dropboxapi.com/2/files/upload'
 const DROPBOX_ACCOUNT_URL = 'https://api.dropboxapi.com/2/users/get_current_account'
-const GOOGLE_DRIVE_FILES_URL = 'https://www.googleapis.com/drive/v3/files'
-const GOOGLE_DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files'
-const GOOGLE_DRIVE_ABOUT_URL = 'https://www.googleapis.com/drive/v3/about?fields=user'
-const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const ONEDRIVE_ROOT_URL = 'https://graph.microsoft.com/v1.0/me/drive'
-const ONEDRIVE_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
 async function requestFormUrlEncoded(url: string, values: Record<string, string>) {
   const body = new URLSearchParams(values)
@@ -26,12 +22,104 @@ async function requestFormUrlEncoded(url: string, values: Record<string, string>
   return response.json()
 }
 
-function encodeOneDrivePath(path: string) {
-  const cleanPath = path.startsWith('/') ? path.slice(1) : path
-  return cleanPath
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
+function base64UrlEncode(buffer: ArrayBuffer) {
+  const binary = String.fromCharCode(...new Uint8Array(buffer))
+  const base64 = btoa(binary)
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function sha256(value: string) {
+  const data = new TextEncoder().encode(value)
+  return crypto.subtle.digest('SHA-256', data)
+}
+
+function generateCodeVerifier() {
+  const array = new Uint8Array(64)
+  crypto.getRandomValues(array)
+  return Array.from(array).map((byte) => ('0' + byte.toString(16)).slice(-2)).join('')
+}
+
+async function generateCodeChallenge(codeVerifier: string) {
+  const digest = await sha256(codeVerifier)
+  return base64UrlEncode(digest)
+}
+
+export async function createDropboxAuthUrl(clientId: string, redirectUri: string) {
+  const codeVerifier = generateCodeVerifier()
+  const codeChallenge = await generateCodeChallenge(codeVerifier)
+  const state = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+
+  sessionStorage.setItem('dropbox-oauth-code-verifier', codeVerifier)
+  sessionStorage.setItem('dropbox-oauth-state', state)
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    token_access_type: 'offline',
+    force_reapprove: 'true',
+    include_granted_scopes: 'none',
+    scope: 'account_info.read files.content.write files.content.read',
+    state,
+  })
+
+  return `${DROPBOX_AUTHORIZE_URL}?${params.toString()}`
+}
+
+export async function exchangeDropboxAuthorizationCode(
+  clientId: string,
+  code: string,
+  redirectUri: string,
+  state: string,
+) {
+  const savedState = sessionStorage.getItem('dropbox-oauth-state')
+  const codeVerifier = sessionStorage.getItem('dropbox-oauth-code-verifier')
+
+  if (!savedState || !codeVerifier) {
+    throw new Error('Dropbox OAuth state mancante. Riprova la connessione.')
+  }
+  if (state !== savedState) {
+    throw new Error('Dropbox OAuth state non corrispondente.')
+  }
+
+  sessionStorage.removeItem('dropbox-oauth-state')
+  sessionStorage.removeItem('dropbox-oauth-code-verifier')
+
+  const response = await requestFormUrlEncoded(DROPBOX_TOKEN_URL, {
+    code,
+    grant_type: 'authorization_code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier,
+  })
+
+  if (!response.access_token) {
+    throw new Error('Dropbox token exchange failed')
+  }
+
+  return {
+    accessToken: response.access_token,
+    refreshToken: response.refresh_token,
+  }
+}
+
+export async function refreshDropboxAccessToken(clientId: string, refreshToken: string) {
+  const response = await requestFormUrlEncoded(DROPBOX_TOKEN_URL, {
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+  })
+
+  if (!response.access_token) {
+    throw new Error('Dropbox refresh token failed')
+  }
+
+  return {
+    accessToken: response.access_token,
+    refreshToken: response.refresh_token,
+  }
 }
 
 export async function downloadDropboxBackup(token: string, path: string): Promise<string> {
@@ -77,7 +165,7 @@ export async function uploadDropboxBackup(token: string, path: string, content: 
   }
 }
 
-export async function verifyDropboxToken(token: string): Promise<void> {
+export async function verifyDropboxToken(token: string): Promise<boolean> {
   const response = await fetch(DROPBOX_ACCOUNT_URL, {
     method: 'POST',
     headers: {
@@ -86,258 +174,8 @@ export async function verifyDropboxToken(token: string): Promise<void> {
   })
 
   if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Dropbox token invalid: ${response.status} ${text}`)
-  }
-}
-
-async function findGoogleDriveFileId(token: string, name: string): Promise<string | null> {
-  const query = encodeURIComponent(`name = '${name.replace(/'/g, "\\'")}' and trashed = false`)
-  const response = await fetch(`${GOOGLE_DRIVE_FILES_URL}?q=${query}&fields=files(id,name)&spaces=drive`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Google Drive file lookup failed: ${response.status}`)
+    return false
   }
 
-  const data = await response.json()
-  return data.files?.[0]?.id ?? null
-}
-
-export async function downloadGoogleDriveBackup(token: string, path: string): Promise<string> {
-  const fileName = path.split('/').filter(Boolean).pop() || path
-  const fileId = await findGoogleDriveFileId(token, fileName)
-  if (!fileId) {
-    return ''
-  }
-
-  const response = await fetch(`${GOOGLE_DRIVE_FILES_URL}/${fileId}?alt=media`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    if (response.status === 404) {
-      return ''
-    }
-    throw new Error(`Google Drive download failed: ${response.status} ${text}`)
-  }
-
-  return await response.text()
-}
-
-export async function uploadGoogleDriveBackup(token: string, path: string, content: string): Promise<void> {
-  const fileName = path.split('/').filter(Boolean).pop() || path
-  let fileId = await findGoogleDriveFileId(token, fileName)
-
-  if (!fileId) {
-    const createResponse = await fetch(`${GOOGLE_DRIVE_FILES_URL}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name: fileName, mimeType: 'application/json' }),
-    })
-
-    if (!createResponse.ok) {
-      const text = await createResponse.text()
-      throw new Error(`Google Drive file creation failed: ${createResponse.status} ${text}`)
-    }
-
-    const created = await createResponse.json()
-    fileId = created.id
-  }
-
-  const uploadResponse = await fetch(`${GOOGLE_DRIVE_UPLOAD_URL}/${fileId}?uploadType=media`, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: content,
-  })
-
-  if (!uploadResponse.ok) {
-    const text = await uploadResponse.text()
-    throw new Error(`Google Drive upload failed: ${uploadResponse.status} ${text}`)
-  }
-}
-
-export async function verifyGoogleDriveToken(token: string): Promise<void> {
-  const response = await fetch(GOOGLE_DRIVE_ABOUT_URL, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Google Drive token invalid: ${response.status} ${text}`)
-  }
-}
-
-export async function downloadOneDriveBackup(token: string, path: string): Promise<string> {
-  const encodedPath = encodeOneDrivePath(path)
-  const url = `${ONEDRIVE_ROOT_URL}/root:/${encodedPath}:/content`
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    if (response.status === 404) {
-      return ''
-    }
-    const text = await response.text()
-    throw new Error(`OneDrive download failed: ${response.status} ${text}`)
-  }
-
-  return await response.text()
-}
-
-export async function uploadOneDriveBackup(token: string, path: string, content: string): Promise<void> {
-  const encodedPath = encodeOneDrivePath(path)
-  const url = `${ONEDRIVE_ROOT_URL}/root:/${encodedPath}:/content`
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: content,
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`OneDrive upload failed: ${response.status} ${text}`)
-  }
-}
-
-export async function verifyOneDriveToken(token: string): Promise<void> {
-  const response = await fetch(`${ONEDRIVE_ROOT_URL}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`OneDrive token invalid: ${response.status} ${text}`)
-  }
-}
-
-export async function refreshGoogleDriveToken(
-  clientId: string,
-  clientSecret: string | undefined,
-  refreshToken: string,
-): Promise<{ accessToken: string; refreshToken?: string }> {
-  const values: Record<string, string> = {
-    client_id: clientId,
-    refresh_token: refreshToken,
-    grant_type: 'refresh_token',
-  }
-
-  if (clientSecret) {
-    values.client_secret = clientSecret
-  }
-
-  const response = await requestFormUrlEncoded(GOOGLE_OAUTH_TOKEN_URL, values)
-  if (!response.access_token) {
-    throw new Error('Google Drive refresh token response missing access_token')
-  }
-
-  return {
-    accessToken: response.access_token,
-    refreshToken: response.refresh_token,
-  }
-}
-
-export async function refreshOneDriveToken(
-  clientId: string,
-  clientSecret: string | undefined,
-  refreshToken: string,
-): Promise<{ accessToken: string; refreshToken?: string }> {
-  const values: Record<string, string> = {
-    client_id: clientId,
-    refresh_token: refreshToken,
-    grant_type: 'refresh_token',
-    scope: 'offline_access Files.ReadWrite',
-  }
-
-  if (clientSecret) {
-    values.client_secret = clientSecret
-  }
-
-  const response = await requestFormUrlEncoded(ONEDRIVE_TOKEN_URL, values)
-  if (!response.access_token) {
-    throw new Error('OneDrive refresh token response missing access_token')
-  }
-
-  return {
-    accessToken: response.access_token,
-    refreshToken: response.refresh_token,
-  }
-}
-
-export async function getGoogleDriveAccessToken(config: {
-  token?: string
-  refreshToken?: string
-  clientId?: string
-  clientSecret?: string
-}): Promise<{ token: string; refreshToken?: string }> {
-  if (config.token) {
-    try {
-      await verifyGoogleDriveToken(config.token)
-      return { token: config.token }
-    } catch {
-      if (!config.refreshToken || !config.clientId) {
-        throw new Error('Google Drive token non valido e refresh token mancanti.')
-      }
-    }
-  }
-
-  if (!config.refreshToken || !config.clientId) {
-    throw new Error('Google Drive refresh token e client ID sono richiesti per aggiornare il token.')
-  }
-
-  const result = await refreshGoogleDriveToken(config.clientId, config.clientSecret, config.refreshToken)
-  return {
-    token: result.accessToken,
-    refreshToken: result.refreshToken,
-  }
-}
-
-export async function getOneDriveAccessToken(config: {
-  token?: string
-  refreshToken?: string
-  clientId?: string
-  clientSecret?: string
-}): Promise<{ token: string; refreshToken?: string }> {
-  if (config.token) {
-    try {
-      await verifyOneDriveToken(config.token)
-      return { token: config.token }
-    } catch {
-      if (!config.refreshToken || !config.clientId) {
-        throw new Error('OneDrive token non valido e refresh token mancanti.')
-      }
-    }
-  }
-
-  if (!config.refreshToken || !config.clientId) {
-    throw new Error('OneDrive refresh token e client ID sono richiesti per aggiornare il token.')
-  }
-
-  const result = await refreshOneDriveToken(config.clientId, config.clientSecret, config.refreshToken)
-  return {
-    token: result.accessToken,
-    refreshToken: result.refreshToken,
-  }
+  return true
 }

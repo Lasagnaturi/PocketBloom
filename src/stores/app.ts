@@ -1,19 +1,18 @@
 import { defineStore } from 'pinia'
 import { saveData, loadData, clearData } from '@/utils/persistence'
 import {
+  createDropboxAuthUrl,
+  exchangeDropboxAuthorizationCode,
+  refreshDropboxAccessToken,
   downloadDropboxBackup,
   uploadDropboxBackup,
   verifyDropboxToken,
-  downloadGoogleDriveBackup,
-  uploadGoogleDriveBackup,
-  verifyGoogleDriveToken,
-  downloadOneDriveBackup,
-  uploadOneDriveBackup,
-  verifyOneDriveToken,
-  getGoogleDriveAccessToken,
-  getOneDriveAccessToken,
 } from '@/services/cloud'
 import type { PocketBloomData } from '@/utils/persistence'
+
+let cloudTokenValidationPromise: Promise<boolean> | null = null
+let cloudTokenValidatedFor: string | null = null
+let cloudTokenValidatedAt = 0
 
 export interface Account {
   id: string
@@ -62,18 +61,17 @@ export interface ThemeSettings {
   mode: 'light' | 'dark'
 }
 
-export type CloudProvider = 'none' | 'google-drive' | 'dropbox' | 'one-drive'
+export type CloudProvider = 'none' | 'dropbox'
 
 export interface CloudConfig {
+  appKey?: string
   token?: string
   refreshToken?: string
-  clientId?: string
-  clientSecret?: string
   path?: string
 }
 
 const isCloudProvider = (value: unknown): value is CloudProvider =>
-  value === 'none' || value === 'google-drive' || value === 'dropbox' || value === 'one-drive'
+  value === 'none' || value === 'dropbox'
 
 export const useAppStore = defineStore('app', {
   state: () => ({
@@ -110,7 +108,11 @@ export const useAppStore = defineStore('app', {
         this.autoBackup = persisted.autoBackup ?? false
         this.supportedCurrencies = persisted.supportedCurrencies ?? ['EUR', 'CHF']
         this.investmentCategories = persisted.investmentCategories ?? ['ETF', 'Crypto']
-        this.accounts = persisted.accounts.map((account) => ({ ...account, closed: account.closed ?? false }))
+        this.accounts = persisted.accounts.map((account) => ({
+          ...account,
+          type: account.type || 'Liquidity',
+          closed: account.closed ?? false,
+        }))
         this.entries = persisted.entries
         this.investments = persisted.investments
         this.investmentLots = persisted.investmentLots ?? []
@@ -135,72 +137,121 @@ export const useAppStore = defineStore('app', {
         lastSync: new Date().toISOString(),
       }
     },
-    async ensureCloudToken() {
-      if (this.cloudProvider === 'dropbox' || this.cloudProvider === 'none') {
-        return
+    async ensureCloudToken(): Promise<boolean> {
+      if (this.cloudProvider !== 'dropbox') {
+        return false
       }
 
-      const { token, refreshToken, clientId, clientSecret } = this.cloudConfig
+      const { token, refreshToken, appKey } = this.cloudConfig
       if (!token && !refreshToken) {
-        return
+        return false
       }
 
-      if (this.cloudProvider === 'google-drive') {
-        const result = await getGoogleDriveAccessToken({ token, refreshToken, clientId, clientSecret })
-        if (result.token !== token || result.refreshToken !== refreshToken) {
-          this.cloudConfig.token = result.token
-          if (result.refreshToken) {
-            this.cloudConfig.refreshToken = result.refreshToken
-          }
-          saveData(this.getCloudPayload())
-        }
-      } else if (this.cloudProvider === 'one-drive') {
-        const result = await getOneDriveAccessToken({ token, refreshToken, clientId, clientSecret })
-        if (result.token !== token || result.refreshToken !== refreshToken) {
-          this.cloudConfig.token = result.token
-          if (result.refreshToken) {
-            this.cloudConfig.refreshToken = result.refreshToken
-          }
-          saveData(this.getCloudPayload())
-        }
+      if (token && token === cloudTokenValidatedFor && Date.now() - cloudTokenValidatedAt < 60_000) {
+        return true
       }
+
+      if (cloudTokenValidationPromise) {
+        return cloudTokenValidationPromise
+      }
+
+      cloudTokenValidationPromise = (async () => {
+        try {
+          if (token) {
+            const validToken = await verifyDropboxToken(token)
+            if (validToken) {
+              cloudTokenValidatedFor = token
+              cloudTokenValidatedAt = Date.now()
+              return true
+            }
+
+            console.warn('Dropbox token invalid or expired')
+            this.cloudConfig.token = undefined
+          }
+
+          if (!refreshToken || !appKey) {
+            console.warn('Dropbox refresh token or app key missing.')
+            return false
+          }
+
+          try {
+            const result = await refreshDropboxAccessToken(appKey, refreshToken)
+            this.cloudConfig.token = result.accessToken
+            if (result.refreshToken) {
+              this.cloudConfig.refreshToken = result.refreshToken
+            }
+            cloudTokenValidatedFor = result.accessToken
+            cloudTokenValidatedAt = Date.now()
+            saveData(this.getCloudPayload())
+            return true
+          } catch (error) {
+            console.warn('Dropbox refresh token failed:', error)
+            return false
+          }
+        } finally {
+          cloudTokenValidationPromise = null
+        }
+      })()
+
+      return cloudTokenValidationPromise
+    },
+    async initiateDropboxAuth(): Promise<string> {
+      const appKey = this.cloudConfig?.appKey
+      if (!appKey) {
+        throw new Error('Inserisci l\'App Key Dropbox prima di connettere l\'account.')
+      }
+
+      const redirectUri = `${window.location.origin}/impostazioni`
+      return await createDropboxAuthUrl(appKey, redirectUri)
+    },
+    async completeDropboxAuth(code: string, state: string) {
+      const appKey = this.cloudConfig?.appKey
+      if (!appKey) {
+        throw new Error('App Key Dropbox mancante.')
+      }
+
+      const redirectUri = `${window.location.origin}/impostazioni`
+      const result = await exchangeDropboxAuthorizationCode(appKey, code, redirectUri, state)
+      this.cloudConfig.token = result.accessToken
+      this.cloudConfig.refreshToken = result.refreshToken
+      this.cloudProvider = 'dropbox'
+      saveData(this.getCloudPayload())
+    },
+    disconnectDropbox() {
+      this.cloudProvider = 'none'
+      this.cloudConfig = {}
+      saveData(this.getCloudPayload())
     },
     async uploadCloudBackup() {
-      await this.ensureCloudToken()
+      const valid = await this.ensureCloudToken()
+      if (!valid) {
+        throw new Error('Dropbox non autenticato. Controlla le credenziali o riconnettiti.')
+      }
+
       const token = this.cloudConfig?.token
       const path = this.cloudConfig?.path
       if (!token || !path) {
-        throw new Error('Token e percorso richiesti per il backup cloud.')
+        throw new Error('Token e percorso richiesti per il backup Dropbox.')
       }
 
       const payload = this.getCloudPayload()
       const content = JSON.stringify(payload)
 
-      if (this.cloudProvider === 'dropbox') {
-        await uploadDropboxBackup(token, path, content)
-      } else if (this.cloudProvider === 'google-drive') {
-        await uploadGoogleDriveBackup(token, path, content)
-      } else if (this.cloudProvider === 'one-drive') {
-        await uploadOneDriveBackup(token, path, content)
-      }
+      await uploadDropboxBackup(token, path, content)
     },
     async downloadCloudBackup(): Promise<PocketBloomData | null> {
-      await this.ensureCloudToken()
+      const valid = await this.ensureCloudToken()
+      if (!valid) {
+        return null
+      }
+
       const token = this.cloudConfig?.token
       const path = this.cloudConfig?.path
       if (!token || !path) {
         return null
       }
 
-      let content = ''
-      if (this.cloudProvider === 'dropbox') {
-        content = await downloadDropboxBackup(token, path)
-      } else if (this.cloudProvider === 'google-drive') {
-        content = await downloadGoogleDriveBackup(token, path)
-      } else if (this.cloudProvider === 'one-drive') {
-        content = await downloadOneDriveBackup(token, path)
-      }
-
+      const content = await downloadDropboxBackup(token, path)
       if (!content) {
         return null
       }
@@ -208,26 +259,16 @@ export const useAppStore = defineStore('app', {
       return JSON.parse(content) as PocketBloomData
     },
     async verifyCloudCredentials(): Promise<boolean> {
-      await this.ensureCloudToken()
-      const token = this.cloudConfig?.token
-      if (!token) {
-        return false
-      }
-
-      if (this.cloudProvider === 'dropbox') {
-        await verifyDropboxToken(token)
-      } else if (this.cloudProvider === 'google-drive') {
-        await verifyGoogleDriveToken(token)
-      } else if (this.cloudProvider === 'one-drive') {
-        await verifyOneDriveToken(token)
-      }
-
-      return true
+      return await this.ensureCloudToken()
     },
     async syncCloudOnStartup() {
+      if (this.cloudProvider !== 'dropbox') {
+        return
+      }
+
       const token = this.cloudConfig?.token
       const path = this.cloudConfig?.path
-      if (!token || !path || this.cloudProvider === 'none') {
+      if (!token || !path) {
         return
       }
 
@@ -267,7 +308,7 @@ export const useAppStore = defineStore('app', {
       }
       saveData(payload)
 
-      if (this.autoBackup && this.cloudProvider !== 'none') {
+      if (this.autoBackup && this.cloudProvider === 'dropbox') {
         void this.uploadCloudBackup().catch((error) => {
           console.warn('Cloud backup failed:', error)
         })
@@ -311,9 +352,35 @@ export const useAppStore = defineStore('app', {
       const now = new Date().toISOString()
       this.accounts.push({
         ...account,
+        type: account.type || 'Liquidity',
         openedAt: account.openedAt ?? now,
         closedAt: account.closed ? now : account.closedAt,
       })
+      this.save()
+    },
+    updateAccount(account: Account) {
+      const index = this.accounts.findIndex((item) => item.id === account.id)
+      if (index === -1) {
+        return
+      }
+
+      const existing = this.accounts[index]
+      const now = new Date().toISOString()
+      const closedAt = existing.closed
+        ? account.closed
+          ? existing.closedAt ?? now
+          : undefined
+        : account.closed
+        ? account.closedAt ?? now
+        : undefined
+
+      this.accounts[index] = {
+        ...existing,
+        ...account,
+        type: account.type || existing.type || 'Liquidity',
+        openedAt: existing.openedAt ?? account.openedAt ?? now,
+        closedAt,
+      }
       this.save()
     },
     updateAccountBalance(accountId: string, balance: number) {
@@ -352,7 +419,11 @@ export const useAppStore = defineStore('app', {
       this.autoBackup = data.autoBackup ?? false
       this.supportedCurrencies = data.supportedCurrencies ?? ['EUR', 'CHF']
       this.investmentCategories = data.investmentCategories ?? ['ETF', 'Crypto']
-      this.accounts = data.accounts.map((account) => ({ ...account, closed: account.closed ?? false }))
+      this.accounts = data.accounts.map((account) => ({
+        ...account,
+        type: account.type || 'Liquidity',
+        closed: account.closed ?? false,
+      }))
       this.entries = data.entries
       this.investments = data.investments
       this.investmentLots = data.investmentLots ?? []
